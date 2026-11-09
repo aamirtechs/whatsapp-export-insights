@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whatsapp-export-insights by AamirTechs</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f6f8fb; color: #1c2733; }
+header { background: #0b1f3a; color: #ffffff; padding: 28px 20px 22px; border-bottom: 4px solid #d4a72c; }
+header .wrap, main, footer .wrap { max-width: 880px; margin: 0 auto; }
+header h1 { margin: 0 0 6px; font-size: 28px; }
+header p { margin: 0; color: #c9d6e8; font-size: 15px; }
+main { padding: 24px 20px 8px; }
+.card { background: #ffffff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(11, 31, 58, 0.12); }
+label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 14px; }
+label:first-child { margin-top: 0; }
+textarea { width: 100%; min-height: 180px; padding: 10px; border: 1px solid #c3cedd; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+input[type="text"], input[type="number"], input[type="date"], select { padding: 8px 10px; border: 1px solid #c3cedd; border-radius: 8px; font-size: 14px; background: #ffffff; }
+.controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.controls .field label { margin-top: 0; }
+.buttons { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; }
+button { border: 0; border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+button.primary { background: #0b1f3a; color: #ffffff; }
+button.secondary { background: #eef2f8; color: #0b1f3a; border: 1px solid #c3cedd; }
+button.accent { background: #d4a72c; color: #0b1f3a; }
+pre { background: #0b1f3a; color: #e8eef7; border-radius: 8px; padding: 14px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-size: 13px; min-height: 60px; }
+.hint { font-size: 13px; color: #5a6b82; margin-top: 6px; }
+footer { padding: 18px 20px 30px; color: #5a6b82; font-size: 13px; }
+footer a { color: #0b1f3a; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>whatsapp-export-insights</h1>
+    <p>Turn an exported WhatsApp chat text file into statistics, fully locally.</p>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <label for="file">Choose a file</label>
+    <input type="file" id="file" accept=".txt,text/plain">
+    <label for="input">Or paste the exported chat text</label>
+    <textarea id="input" placeholder="12/03/2026, 09:15 - Ayesha: Morning team"></textarea>
+    <div class="controls" style="margin-top:14px;">
+      <div class="field">
+        <label for="opt-top">Top N (CLI --top, default 10)</label>
+        <input type="number" id="opt-top" value="10" min="1" max="100">
+      </div>
+      <div class="field">
+        <label for="opt-format">Output format</label>
+        <select id="opt-format">
+          <option value="text" selected>Report (CLI default)</option>
+          <option value="json">JSON (CLI --json)</option>
+          <option value="check">Check only (CLI --check)</option>
+        </select>
+      </div>
+    </div>
+    <div class="buttons">
+      <button type="button" class="primary" id="run">Run</button>
+      <button type="button" class="secondary" id="sample">Load sample</button>
+      <button type="button" class="accent" id="download" disabled>Download report</button>
+    </div>
+    <label for="output">Report</label>
+    <pre id="output">Your report will appear here.</pre>
+    <p class="hint">Handles day-first dates (12/03/2026, 09:15), ISO dates (2026-03-12, 09:15), seconds, multi-line messages, and system lines.</p>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>Built by AamirTechs. <a href="https://aamirtechs.github.io/">All tools</a> | <a href="https://github.com/aamirtechs/whatsapp-export-insights">Source</a></p>
+    <p>Privacy: this tool runs 100% in your browser. Nothing is uploaded.</p>
+  </div>
+</footer>
+<script id="core">
+// whatsapp-export-insights core logic: a faithful port of
+// whatsapp_export_insights.py. Pure functions only, no DOM access.
+// window.runTool(inputText, options) returns the CLI text report.
+// options: { top: 10, json: false, check: false }
+"use strict";
+
+var DATE_PATTERNS = [
+  { re: /^(\d{1,2})\/(\d{1,2})\/(\d{4}), (\d{1,2}):(\d{2})(?::(\d{2}))? - /,
+    build: function (m) { return [parseInt(m[3], 10), parseInt(m[2], 10), parseInt(m[1], 10), parseInt(m[4], 10), parseInt(m[5], 10), m[6] ? parseInt(m[6], 10) : 0]; } },
+  { re: /^(\d{4})-(\d{1,2})-(\d{1,2}), (\d{1,2}):(\d{2})(?::(\d{2}))? - /,
+    build: function (m) { return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10), parseInt(m[4], 10), parseInt(m[5], 10), m[6] ? parseInt(m[6], 10) : 0]; } }
+];
+var MEDIA_MARKERS = ["<Media omitted>", "<media omitted>"];
+var STOPWORDS = {};
+("a,an,the,and,or,but,if,then,so,is,are,was,were,be,been,i,you,he,she,we,they,it,this,that,to,of,in,on,for,with,at,by,from,as,am,do,does,did,will,would,thanks,thank,hi,hello,hey,ok,okay,yes,no,please,just,now,today,tomorrow,me,my,our").split(",").forEach(function (w) { STOPWORDS[w] = true; });
+var WORD_RE = /[a-z][a-z\-']+/g;
+var LINK_RE = /https?:\/\/\S+|www\.\S+/g;
+var WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function daysFromCivil(y, m, d) {
+  var yy = m <= 2 ? y - 1 : y;
+  var era = Math.floor(yy / 400);
+  var yoe = yy - era * 400;
+  var mp = (m + 9) % 12;
+  var doy = Math.floor((153 * mp + 2) / 5) + d - 1;
+  var doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+function daysInMonth(y, m) {
+  var leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+}
+function pad(n, w) { var s = String(n); while (s.length < w) s = "0" + s; return s; }
+function makeWhen(y, mo, d, h, mi, s) {
+  if (y < 1 || y > 9999 || mo < 1 || mo > 12) return null;
+  if (d < 1 || d > daysInMonth(y, mo)) return null;
+  if (h < 0 || h > 23 || mi < 0 || mi > 59 || s < 0 || s > 59) return null;
+  var days = daysFromCivil(y, mo, d);
+  var secs = ((days * 24 + h) * 60 + mi) * 60 + s;
+  var wd = WEEKDAYS[(((days % 7) + 7) % 7 + 4) % 7];
+  return {
+    year: y, month: mo, day: d, hour: h, minute: mi, second: s, secs: secs,
+    iso: pad(y, 4) + "-" + pad(mo, 2) + "-" + pad(d, 2) + "T" + pad(h, 2) + ":" + pad(mi, 2) + ":" + pad(s, 2),
+    date: pad(y, 4) + "-" + pad(mo, 2) + "-" + pad(d, 2),
+    weekday: wd
+  };
+}
+function parseChat(text) {
+  var messages = [], systemLines = 0, skipped = 0;
+  var norm = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  var rawLines = norm.split("\n");
+  for (var li = 0; li < rawLines.length; li++) {
+    var line = rawLines[li].trim();
+    if (!line) continue;
+    var matched = false;
+    for (var pi = 0; pi < DATE_PATTERNS.length; pi++) {
+      var m = DATE_PATTERNS[pi].re.exec(line);
+      if (!m) continue;
+      matched = true;
+      var parts = DATE_PATTERNS[pi].build(m);
+      var when = makeWhen(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]);
+      if (when === null) { skipped += 1; break; }
+      var rest = line.slice(m[0].length);
+      var idx = rest.indexOf(": ");
+      if (idx !== -1) {
+        messages.push({ when: when, sender: rest.slice(0, idx).trim(), text: rest.slice(idx + 2) });
+      } else {
+        systemLines += 1;
+      }
+      break;
+    }
+    if (!matched) {
+      if (messages.length) messages[messages.length - 1].text += "\n" + line;
+      else skipped += 1;
+    }
+  }
+  return { messages: messages, systemLines: systemLines, skipped: skipped };
+}
+function Counter() { this.map = new Map(); }
+Counter.prototype.add = function (k) { this.map.set(k, (this.map.get(k) || 0) + 1); };
+Counter.prototype.mostCommon = function (n) {
+  var entries = Array.from(this.map.entries());
+  entries.sort(function (a, b) { return b[1] - a[1]; });
+  return n === undefined ? entries : entries.slice(0, n);
+};
+Counter.prototype.sortedEntries = function () {
+  var entries = Array.from(this.map.entries());
+  entries.sort(function (a, b) { return a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0); });
+  return entries;
+};
+function pyRound1(x) {
+  var scaled = x * 10;
+  var fl = Math.floor(scaled);
+  var diff = scaled - fl;
+  var r;
+  if (diff > 0.5) r = fl + 1;
+  else if (diff < 0.5) r = fl;
+  else r = (fl % 2 === 0) ? fl : fl + 1;
+  return r / 10;
+}
+function medianMinutes(values) {
+  if (!values.length) return null;
+  var sorted = values.slice().sort(function (a, b) { return a - b; });
+  var mid = Math.floor(sorted.length / 2);
+  var med = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return pyRound1(med);
+}
+function pyFloat(v) {
+  if (v === null || v === undefined) return "None";
+  if (Number.isInteger(v)) return v.toFixed(1);
+  return String(v);
+}
+function analyse(messages, topN) {
+  var senders = new Counter(), hours = new Counter(), weekdays = new Counter(), days = new Counter();
+  messages.forEach(function (msg) {
+    senders.add(msg.sender); hours.add(msg.when.hour); weekdays.add(msg.when.weekday); days.add(msg.when.date);
+  });
+  var media = 0, links = 0;
+  var words = new Counter();
+  messages.forEach(function (msg) {
+    var trimmed = msg.text.trim();
+    if (MEDIA_MARKERS.indexOf(trimmed) !== -1) { media += 1; return; }
+    var lm = msg.text.match(LINK_RE); if (lm) links += lm.length;
+    var wm = msg.text.toLowerCase().match(WORD_RE);
+    if (wm) wm.forEach(function (w) { if (!STOPWORDS[w] && w.length > 1) words.add(w); });
+  });
+  messages.forEach(function (msg) {
+    var lm = msg.text.match(LINK_RE); if (MEDIA_MARKERS.indexOf(msg.text.trim()) === -1 && lm) { /* already counted above except media */ }
+  });
+  // Link counting in the Python code runs for every message, media included,
+  // but media text is a fixed marker with no links, so the totals agree.
+  var replyBySender = new Map(), replyOrder = [];
+  for (var i = 1; i < messages.length; i++) {
+    var prev = messages[i - 1], cur = messages[i];
+    if (cur.sender !== prev.sender) {
+      var delta = (cur.when.secs - prev.when.secs) / 60.0;
+      if (delta >= 0 && delta <= 12 * 60) {
+        if (!replyBySender.has(cur.sender)) { replyBySender.set(cur.sender, []); replyOrder.push(cur.sender); }
+        replyBySender.get(cur.sender).push(delta);
+      }
+    }
+  }
+  var medians = replyOrder.map(function (s) { return [s, medianMinutes(replyBySender.get(s))]; });
+  var allReplies = [];
+  replyOrder.forEach(function (s) { allReplies = allReplies.concat(replyBySender.get(s)); });
+  return {
+    total: messages.length,
+    senders: senders.mostCommon(),
+    topTalkers: senders.mostCommon(topN),
+    busiestHours: hours.sortedEntries(),
+    busiestWeekdays: weekdays.mostCommon(),
+    perDay: days.sortedEntries(),
+    first: messages.length ? messages[0].when.iso : null,
+    last: messages.length ? messages[messages.length - 1].when.iso : null,
+    media: media, links: links,
+    topWords: words.mostCommon(topN),
+    medianOverall: medianMinutes(allReplies),
+    medianBySender: medians
+  };
+}
+function renderReport(stats, systemLines, skipped) {
+  var lines = [];
+  lines.push("WhatsApp chat insights");
+  lines.push("=====================");
+  lines.push("Messages: " + stats.total);
+  if (stats.first) lines.push("Period: " + stats.first + " to " + stats.last);
+  lines.push("System lines: " + systemLines);
+  if (skipped) lines.push("Skipped lines: " + skipped);
+  lines.push("");
+  lines.push("Top talkers:");
+  stats.topTalkers.forEach(function (p) { lines.push("  " + p[0] + ": " + p[1]); });
+  lines.push("");
+  lines.push("Busiest hours:");
+  stats.busiestHours.forEach(function (p) { lines.push("  " + pad(p[0], 2) + ":00: " + p[1]); });
+  lines.push("");
+  lines.push("Messages per day:");
+  stats.perDay.forEach(function (p) { lines.push("  " + p[0] + ": " + p[1]); });
+  lines.push("");
+  lines.push("Media messages: " + stats.media);
+  lines.push("Links shared: " + stats.links);
+  lines.push("Median reply time: " + pyFloat(stats.medianOverall) + " minutes");
+  lines.push("");
+  lines.push("Top words:");
+  stats.topWords.forEach(function (p) { lines.push("  " + p[0] + ": " + p[1]); });
+  return lines.join("\n") + "\n";
+}
+// Minimal Python-compatible JSON writer (json.dumps with indent=2).
+function pyJsonStr(s) {
+  var out = JSON.stringify(String(s));
+  return out.replace(/[\u007f-\uffff]/g, function (ch) {
+    var hex = ch.charCodeAt(0).toString(16);
+    while (hex.length < 4) hex = "0" + hex;
+    return "\\u" + hex;
+  });
+}
+function Dict(pairs) { this.pairs = pairs; }
+function FloatVal(v) { this.v = v; }
+function pyJson(v, level) {
+  var padStr = "", i;
+  for (i = 0; i < level + 1; i++) padStr += "  ";
+  var closePad = "";
+  for (i = 0; i < level; i++) closePad += "  ";
+  if (v === null || v === undefined) return "null";
+  if (v instanceof FloatVal) return pyFloat(v.v);
+  if (v instanceof Dict) {
+    if (!v.pairs.length) return "{}";
+    var parts = v.pairs.map(function (p) { return padStr + pyJsonStr(p[0]) + ": " + pyJson(p[1], level + 1); });
+    return "{\n" + parts.join(",\n") + "\n" + closePad + "}";
+  }
+  if (Array.isArray(v)) {
+    if (!v.length) return "[]";
+    var items = v.map(function (x) { return padStr + pyJson(x, level + 1); });
+    return "[\n" + items.join(",\n") + "\n" + closePad + "]";
+  }
+  if (typeof v === "number") return String(v);
+  if (typeof v === "string") return pyJsonStr(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return pyJsonStr(String(v));
+}
+function pairsToDict(pairs) { return new Dict(pairs.map(function (p) { return [String(p[0]), p[1]]; })); }
+window.runTool = function (inputText, options) {
+  options = options || {};
+  var topN = (options.top === undefined || options.top === null) ? 10 : options.top;
+  var parsed = parseChat(inputText == null ? "" : String(inputText));
+  if (options.check) {
+    if (!parsed.messages.length) return "error: no messages found";
+    return "ok: " + parsed.messages.length + " messages parsed";
+  }
+  if (!parsed.messages.length) return "error: no messages found";
+  var stats = analyse(parsed.messages, topN);
+  if (options.json) {
+    var out = new Dict([
+      ["total_messages", stats.total],
+      ["senders", pairsToDict(stats.senders)],
+      ["top_talkers", pairsToDict(stats.topTalkers)],
+      ["busiest_hours", pairsToDict(stats.busiestHours)],
+      ["busiest_weekdays", pairsToDict(stats.busiestWeekdays)],
+      ["messages_per_day", pairsToDict(stats.perDay)],
+      ["first_message", stats.first],
+      ["last_message", stats.last],
+      ["media_messages", stats.media],
+      ["links_shared", stats.links],
+      ["top_words", pairsToDict(stats.topWords)],
+      ["median_reply_minutes_overall", stats.medianOverall === null ? null : new FloatVal(stats.medianOverall)],
+      ["median_reply_minutes_by_sender", new Dict(stats.medianBySender.map(function (p) { return [p[0], p[1] === null ? null : new FloatVal(p[1])]; }))],
+      ["system_lines", parsed.systemLines],
+      ["skipped_lines", parsed.skipped]
+    ]);
+    return pyJson(out, 0) + "\n";
+  }
+  return renderReport(stats, parsed.systemLines, parsed.skipped);
+};
+</script>
+<script>
+(function () {
+  var SAMPLE_TEXT = `12/03/2026, 09:15 - Ayesha: Morning team, the weekly report is ready
+12/03/2026, 09:16 - Bilal: Great, I will review it before lunch
+12/03/2026, 09:20 - Ayesha: Thanks, I shared the summary at https://example.com/report
+12/03/2026, 10:05 - Bilal: <Media omitted>
+12/03/2026, 18:40 - Ayesha: Done for today, see you tomorrow
+13/03/2026, 08:55 - Bilal: Morning, one question about the report
+13/03/2026, 09:02 - Ayesha: Sure, ask away
+13/03/2026, 09:03 - Bilal: All clear now, thanks
+`;
+  var inputEl = document.getElementById("input");
+  var outputEl = document.getElementById("output");
+  var downloadBtn = document.getElementById("download");
+  var lastReport = "";
+  document.getElementById("file").addEventListener("change", function (event) {
+    var file = event.target.files && event.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { inputEl.value = String(reader.result || ""); };
+    reader.readAsText(file);
+  });
+  document.getElementById("sample").addEventListener("click", function () { inputEl.value = SAMPLE_TEXT; });
+  document.getElementById("run").addEventListener("click", function () {
+    var fmt = document.getElementById("opt-format").value;
+    var options = { top: parseInt(document.getElementById("opt-top").value, 10) || 10, json: fmt === "json", check: fmt === "check" };
+    try { lastReport = window.runTool(inputEl.value, options); }
+    catch (e) { lastReport = "Error: " + e.message; }
+    outputEl.textContent = lastReport;
+    downloadBtn.disabled = false;
+  });
+  downloadBtn.addEventListener("click", function () {
+    if (!lastReport) return;
+    var blob = new Blob([lastReport], { type: "text/plain;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url; link.download = "whatsapp-insights-report.txt";
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  });
+})();
+</script>
+</body>
+</html>

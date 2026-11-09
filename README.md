@@ -1,4 +1,5 @@
 # whatsapp-export-insights
+**Live tool:** https://aamirtechs.github.io/whatsapp-export-insights/ (runs in your browser, no install)
 
 Turn an exported WhatsApp chat text file into statistics, fully locally.
 No network access, no account, no upload. Your chat never leaves your machine.
